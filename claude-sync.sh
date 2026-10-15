@@ -62,6 +62,30 @@ local_slug_for() {
   esac
 }
 
+# rsync only creates the last level of a destination, so the very first push to
+# an empty remote fails on `projects/<slug>` (and on the remote root itself if
+# it doesn't exist yet). Create every missing ancestor of $1, one level at a
+# time, by syncing an empty directory onto it. Deliberately not `--mkpath`,
+# which needs rsync >= 3.2.3 on the *server* side too.
+ensure_remote_parents() {
+  local rel path part empty
+  local -a parts
+  rel="${1#"$remote"}"
+  rel="${rel#/}"
+  rel="${rel%/}"
+  empty="$(mktemp -d)"
+  rsync -e "$rsync_ssh" -a "$empty/" "$remote/" >/dev/null 2>&1
+  IFS=/ read -ra parts <<<"$rel"
+  # The last component is created by the retried rsync itself.
+  unset 'parts[-1]'
+  path=""
+  for part in "${parts[@]}"; do
+    path="$path/$part"
+    rsync -e "$rsync_ssh" -a "$empty/" "$remote$path/" >/dev/null 2>&1
+  done
+  rmdir "$empty"
+}
+
 run_rsync() {
   local out rc attempt
   for attempt in 1 2; do
@@ -72,7 +96,11 @@ run_rsync() {
     # session right after accepting it - a transient server-side blip. One
     # quiet retry absorbs it instead of notifying on what a couple of seconds
     # later just works.
-    [ "$attempt" = 1 ] && sleep 2
+    if [ "$attempt" = 1 ]; then
+      # Also covers a first push into a remote lacking parent directories.
+      [ "$direction" = push ] && ensure_remote_parents "${!#}"
+      sleep 2
+    fi
   done
   if [ "$rc" != 0 ]; then
     failed=1

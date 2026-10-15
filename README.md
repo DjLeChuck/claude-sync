@@ -81,4 +81,3 @@ In `~/.claude/settings.json`:
 ## Known limitations
 
 - Linux only (`flock`, `notify-send`).
-- The very first `push` to an empty remote fails for `projects/` until that directory exists remotely (rsync only creates one level): create it once by hand.
