@@ -75,18 +75,15 @@
             {
               nativeBuildInputs = [
                 pkgs.bats
-                (mkClaudeSync
-                  (
-                    pkgs
-                    // {
-                      # Record notifications instead of needing a desktop session.
-                      libnotify = pkgs.writeShellScriptBin "notify-send" ''
-                        echo "$*" >> "$NOTIFY_LOG"
-                      '';
-                    }
-                  )
-                  { }
-                )
+                (mkClaudeSync (
+                  pkgs
+                  // {
+                    # Record notifications instead of needing a desktop session.
+                    libnotify = pkgs.writeShellScriptBin "notify-send" ''
+                      echo "$*" >> "$NOTIFY_LOG"
+                    '';
+                  }
+                ) { })
               ];
             }
             ''
