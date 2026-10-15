@@ -13,7 +13,7 @@ Tests are bats tests in `tests/`, run through `nix flake check`. There is no oth
 - Build the package: `nix build` (result in `./result`, git-ignored), then `./result/bin/claude-sync {pull|push} [project-dir]`
 - Format Nix files: `nix fmt` (formatter is `nixfmt`)
 - Run the tests (and validate the flake): `nix flake check --print-build-logs`
-- Run a single test: `nix develop nixpkgs#bats` is not needed, build first (`nix build`), then `PATH=$PWD/result/bin:$PATH nix run nixpkgs#bats -- -f '<test name regex>' tests/`. A real `notify-send` is used in that case, and `$NOTIFY_LOG` is only recorded in the flake check.
+- Run a single test: `nix build`, then `PATH=$PWD/result/bin:$PATH nix run nixpkgs#bats -- -f '<name regex>' tests/`. Outside the flake check the real `notify-send` is used, so the two notification tests won't pass there.
 - Per the global instructions, also check Nix files with `nixd` diagnostics and `nixfmt`.
 
 `nix build` runs `writeShellApplication`, which applies `shellcheck` at build time. That build is the effective lint for `claude-sync.sh`.
