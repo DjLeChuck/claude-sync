@@ -69,6 +69,32 @@
         default = mkClaudeSync pkgs { };
       });
 
+      checks = forAllSystems (pkgs: {
+        default =
+          pkgs.runCommand "claude-sync-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.bats
+                (mkClaudeSync
+                  (
+                    pkgs
+                    // {
+                      # Record notifications instead of needing a desktop session.
+                      libnotify = pkgs.writeShellScriptBin "notify-send" ''
+                        echo "$*" >> "$NOTIFY_LOG"
+                      '';
+                    }
+                  )
+                  { }
+                )
+              ];
+            }
+            ''
+              bats ${./tests}
+              touch $out
+            '';
+      });
+
       homeManagerModules.default = import ./module.nix { inherit mkClaudeSync; };
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);

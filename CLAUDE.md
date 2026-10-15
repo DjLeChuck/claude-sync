@@ -6,16 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `claude-sync` syncs `~/.claude` (projects/conversations, plans, memory, skills, `CLAUDE.md`) between machines using rsync-over-SSH with `sshpass`. It is a single bash script packaged as a Nix flake, plus a home-manager module. See `README.md` for user-facing docs and the config variable table.
 
-There is no test suite and no linter beyond what Nix provides.
+Tests are bats tests in `tests/`, run through `nix flake check`. There is no other linter than what Nix provides.
 
 ## Commands
 
 - Build the package: `nix build` (result in `./result`, git-ignored), then `./result/bin/claude-sync {pull|push} [project-dir]`
 - Format Nix files: `nix fmt` (formatter is `nixfmt`)
-- Validate the flake: `nix flake check`
+- Run the tests (and validate the flake): `nix flake check --print-build-logs`
+- Run a single test: `nix develop nixpkgs#bats` is not needed, build first (`nix build`), then `PATH=$PWD/result/bin:$PATH nix run nixpkgs#bats -- -f '<test name regex>' tests/`. A real `notify-send` is used in that case, and `$NOTIFY_LOG` is only recorded in the flake check.
 - Per the global instructions, also check Nix files with `nixd` diagnostics and `nixfmt`.
 
 `nix build` runs `writeShellApplication`, which applies `shellcheck` at build time. That build is the effective lint for `claude-sync.sh`.
+
+### Test setup
+
+`tests/claude-sync.bats` uses a plain local directory as the rsync remote (rsync accepts local paths, so SSH and `sshpass` are never exercised). The `checks` output in `flake.nix` builds the package with a fake `libnotify` whose `notify-send` appends to `$NOTIFY_LOG`, since the package puts its own runtime inputs first on `PATH`.
 
 ## Architecture
 
