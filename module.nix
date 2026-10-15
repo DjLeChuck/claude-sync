@@ -16,7 +16,15 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = mkClaudeSync pkgs {
-        inherit (cfg) remote passwordFile localDir;
+        inherit (cfg)
+          remote
+          passwordFile
+          localDir
+          projects
+          directories
+          files
+          notifyOnFailure
+          ;
       };
       defaultText = lib.literalMD "`claude-sync` built with the options below";
       description = "The claude-sync package to install and run.";
@@ -45,6 +53,45 @@ in
       type = lib.types.str;
       default = "$HOME/.claude";
       description = "Local Claude Code directory to sync. May reference `$HOME`.";
+    };
+
+    projects = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Sync `projects/` (conversation history), one project at a time. Project
+        slugs are mapped so that `$HOME`-rooted projects merge across machines
+        with different usernames.
+      '';
+    };
+
+    directories = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [
+        "plans"
+        "memory"
+        "skills"
+      ];
+      description = "Directories of `localDir` to sync (names must not contain spaces).";
+    };
+
+    files = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "CLAUDE.md" ];
+      example = [
+        "CLAUDE.md"
+        "keybindings.json"
+      ];
+      description = "Files of `localDir` to sync (names must not contain spaces).";
+    };
+
+    notifyOnFailure = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Send a desktop notification (`notify-send`) when a sync fails.
+        Failures are always logged to the journal (`journalctl -t claude-sync`).
+      '';
     };
 
     push = {

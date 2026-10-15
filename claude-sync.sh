@@ -1,5 +1,5 @@
-# Pushes/pulls the shareable parts of ~/.claude (projects, plans, memory,
-# skills, CLAUDE.md, statusline.py) to/from a remote reachable through
+# Pushes/pulls the shareable parts of ~/.claude (projects, plus a configurable
+# list of directories and files) to/from a remote reachable through
 # rsync-over-SSH with password authentication (sshpass).
 #
 # Meant to be wired to Claude Code's SessionStart/SessionEnd hooks plus a
@@ -11,10 +11,20 @@
 #   CLAUDE_SYNC_REMOTE         rsync remote root, e.g. "myhost:/claude-code-sync"
 #   CLAUDE_SYNC_PASSWORD_FILE  file holding the SSH password for sshpass
 #   CLAUDE_SYNC_LOCAL_DIR      local Claude Code directory (default: ~/.claude)
+#   CLAUDE_SYNC_PROJECTS       "1" to sync projects/ (per-project, see below)
+#   CLAUDE_SYNC_DIRS           space-separated directories of LOCAL_DIR to sync
+#   CLAUDE_SYNC_FILES          space-separated files of LOCAL_DIR to sync
+#                              (names containing spaces are not supported)
+#   CLAUDE_SYNC_NOTIFY         "1" to send a desktop notification on failure
+#                              (failures are always logged to the journal)
 
 : "${CLAUDE_SYNC_REMOTE:?CLAUDE_SYNC_REMOTE is not set}"
 : "${CLAUDE_SYNC_PASSWORD_FILE:?CLAUDE_SYNC_PASSWORD_FILE is not set}"
 : "${CLAUDE_SYNC_LOCAL_DIR:=$HOME/.claude}"
+: "${CLAUDE_SYNC_PROJECTS:=1}"
+: "${CLAUDE_SYNC_DIRS:=}"
+: "${CLAUDE_SYNC_FILES:=}"
+: "${CLAUDE_SYNC_NOTIFY:=1}"
 
 if [ "${FLOCKED:-}" != "1" ]; then
   # Backgrounded (see the SessionStart/SessionEnd hooks) syncs can overlap -
@@ -165,12 +175,11 @@ sync_projects() {
 
 case "$direction" in
   pull | push)
-    sync_projects
-    sync_one dir plans
-    sync_one dir memory
-    sync_one dir skills
-    sync_one file CLAUDE.md
-    sync_one file statusline.py
+    [ "$CLAUDE_SYNC_PROJECTS" = 1 ] && sync_projects
+    read -ra sync_dirs <<<"$CLAUDE_SYNC_DIRS"
+    read -ra sync_files <<<"$CLAUDE_SYNC_FILES"
+    for item in "${sync_dirs[@]}"; do sync_one dir "$item"; done
+    for item in "${sync_files[@]}"; do sync_one file "$item"; done
     ;;
   *)
     echo "usage: claude-sync {pull|push} [project-dir]" >&2
@@ -178,7 +187,7 @@ case "$direction" in
     ;;
 esac
 
-if [ "$failed" = 1 ]; then
+if [ "$failed" = 1 ] && [ "$CLAUDE_SYNC_NOTIFY" = 1 ]; then
   if [ -n "$target_dir" ]; then
     label="$(basename "$target_dir")"
   else

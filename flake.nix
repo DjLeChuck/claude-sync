@@ -23,6 +23,14 @@
           remote ? "pcloud-rsync:/claude-code-sync",
           passwordFile ? "$HOME/.config/pcloud-rsync-password",
           localDir ? "$HOME/.claude",
+          projects ? true,
+          directories ? [
+            "plans"
+            "memory"
+            "skills"
+          ],
+          files ? [ "CLAUDE.md" ],
+          notifyOnFailure ? true,
         }:
         pkgs.writeShellApplication {
           name = "claude-sync";
@@ -43,7 +51,12 @@
             : "''${CLAUDE_SYNC_REMOTE:=${remote}}"
             : "''${CLAUDE_SYNC_PASSWORD_FILE:=${passwordFile}}"
             : "''${CLAUDE_SYNC_LOCAL_DIR:=${localDir}}"
+            : "''${CLAUDE_SYNC_PROJECTS:=${if projects then "1" else "0"}}"
+            : "''${CLAUDE_SYNC_DIRS:=${nixpkgs.lib.concatStringsSep " " directories}}"
+            : "''${CLAUDE_SYNC_FILES:=${nixpkgs.lib.concatStringsSep " " files}}"
+            : "''${CLAUDE_SYNC_NOTIFY:=${if notifyOnFailure then "1" else "0"}}"
             export CLAUDE_SYNC_REMOTE CLAUDE_SYNC_PASSWORD_FILE CLAUDE_SYNC_LOCAL_DIR
+            export CLAUDE_SYNC_PROJECTS CLAUDE_SYNC_DIRS CLAUDE_SYNC_FILES CLAUDE_SYNC_NOTIFY
 
             ${builtins.readFile ./claude-sync.sh}
           '';
