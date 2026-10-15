@@ -74,30 +74,46 @@ local_slug_for() {
 
 # rsync only creates the last level of a destination, so the very first push to
 # an empty remote fails on `projects/<slug>` (and on the remote root itself if
-# it doesn't exist yet). Create every missing ancestor of $1, one level at a
-# time, by syncing an empty directory onto it. Deliberately not `--mkpath`,
-# which needs rsync >= 3.2.3 on the *server* side too.
+# it, or any of its parents, doesn't exist yet). Create every missing ancestor
+# of $1 - remote root included - one level at a time, by syncing an empty
+# directory onto it. Deliberately not `--mkpath`, which needs rsync >= 3.2.3 on
+# the *server* side too.
 ensure_remote_parents() {
-  local rel path part empty
+  local rel host root lead path part empty
   local -a parts
   rel="${1#"$remote"}"
   rel="${rel#/}"
   rel="${rel%/}"
+  case "$remote" in
+    *:*)
+      host="${remote%%:*}:"
+      root="${remote#*:}"
+      ;;
+    *)
+      host=""
+      root="$remote"
+      ;;
+  esac
+  lead=""
+  [ "${root:0:1}" = / ] && lead="/"
   empty="$(mktemp -d)"
-  rsync -e "$rsync_ssh" -a "$empty/" "$remote/" >/dev/null 2>&1
-  IFS=/ read -ra parts <<<"$rel"
+  IFS=/ read -ra parts <<<"$root/$rel"
   # The last component is created by the retried rsync itself.
   unset 'parts[-1]'
   path=""
   for part in "${parts[@]}"; do
-    path="$path/$part"
-    rsync -e "$rsync_ssh" -a "$empty/" "$remote$path/" >/dev/null 2>&1
+    [ -n "$part" ] || continue
+    path="${path:+$path/}$part"
+    rsync -e "$rsync_ssh" -a "$empty/" "$host$lead$path/" >/dev/null 2>&1
   done
   rmdir "$empty"
 }
 
 run_rsync() {
   local out rc attempt
+  # Same limitation locally: a pull's destination may sit below a directory
+  # that doesn't exist yet (fresh machine, no ~/.claude/projects).
+  [ "$direction" = pull ] && mkdir -p "$(dirname "${!#}")"
   for attempt in 1 2; do
     out="$(rsync -e "$rsync_ssh" -au "$@" 2>&1)"
     rc=$?
@@ -131,12 +147,14 @@ pull_exists() {
   rsync -e "$rsync_ssh" --list-only "$1" >/dev/null 2>&1
 }
 
+# A configured item missing locally (no CLAUDE.md yet, no skills/ ever created)
+# is nothing to push, not a failure.
 sync_one() {
   case "$1:$direction" in
     dir:pull) pull_exists "$remote/$2/" && run_rsync "$remote/$2/" "$local_dir/$2/" ;;
-    dir:push) run_rsync "$local_dir/$2/" "$remote/$2/" ;;
+    dir:push) [ -d "$local_dir/$2" ] && run_rsync "$local_dir/$2/" "$remote/$2/" ;;
     file:pull) pull_exists "$remote/$2" && run_rsync "$remote/$2" "$local_dir/$2" ;;
-    file:push) run_rsync "$local_dir/$2" "$remote/$2" ;;
+    file:push) [ -f "$local_dir/$2" ] && run_rsync "$local_dir/$2" "$remote/$2" ;;
   esac
 }
 

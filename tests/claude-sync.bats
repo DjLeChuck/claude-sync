@@ -12,14 +12,10 @@ setup() {
   export CLAUDE_SYNC_DIRS="plans memory"
   export CLAUDE_SYNC_FILES="CLAUDE.md"
   export CLAUDE_SYNC_NOTIFY=1
-  # rsync only creates the last level of a destination, so pulls need a local
-  # projects/ to already exist.
-  mkdir -p "$HOME" "$CLAUDE_SYNC_LOCAL_DIR/projects"
+  mkdir -p "$HOME" "$CLAUDE_SYNC_LOCAL_DIR"
   echo secret >"$CLAUDE_SYNC_PASSWORD_FILE"
 
   export NOTIFY_LOG="$BATS_TEST_TMPDIR/notify.log"
-  # A configured file missing locally makes rsync fail, so always provide it.
-  echo instructions >"$CLAUDE_SYNC_LOCAL_DIR/CLAUDE.md"
 
   home_slug="$(printf '%s' "$HOME" | sed -E 's/[^A-Za-z0-9]/-/g')"
 }
@@ -123,6 +119,37 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
   run claude-sync push
   [ "$status" -eq 0 ]
   [ "$(cat "$CLAUDE_SYNC_REMOTE/plans/p.md")" = new ]
+}
+
+@test "first push creates a missing nested remote root" {
+  CLAUDE_SYNC_REMOTE="$BATS_TEST_TMPDIR/deep/er/remote"
+  export CLAUDE_SYNC_REMOTE
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/projects/-srv-app/s.jsonl" x
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" plan
+
+  run claude-sync push
+  [ "$status" -eq 0 ]
+  [ -e "$CLAUDE_SYNC_REMOTE/projects/-srv-app/s.jsonl" ]
+  [ -e "$CLAUDE_SYNC_REMOTE/plans/p.md" ]
+}
+
+@test "pull creates a missing local projects/ and dirs" {
+  mkfile "$CLAUDE_SYNC_REMOTE/projects/-srv-app/s.jsonl" x
+  mkfile "$CLAUDE_SYNC_REMOTE/plans/p.md" plan
+  mkfile "$CLAUDE_SYNC_REMOTE/CLAUDE.md" instructions
+
+  run claude-sync pull
+  [ "$status" -eq 0 ]
+  [ -e "$CLAUDE_SYNC_LOCAL_DIR/projects/-srv-app/s.jsonl" ]
+  [ -e "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" ]
+  [ -e "$CLAUDE_SYNC_LOCAL_DIR/CLAUDE.md" ]
+}
+
+@test "push skips configured items missing locally without failing" {
+  # Neither plans/, memory/ nor CLAUDE.md exist locally.
+  run claude-sync push
+  [ "$status" -eq 0 ]
+  [ ! -e "$NOTIFY_LOG" ]
 }
 
 @test "pull from an empty remote is not a failure" {
