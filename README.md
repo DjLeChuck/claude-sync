@@ -12,7 +12,7 @@ What gets synced by default: `projects/`, `plans/`, `memory/`, `skills/` and `CL
 
 - `claude-sync pull [project-dir]` / `claude-sync push [project-dir]`.
 - **Additive** merge: `rsync -au` only overwrites older files and never deletes anything (the machines are never used at the same time).
-- With `project-dir` (what the `SessionStart`/`SessionEnd` hooks pass), only that project is synced; without arguments, every project is.
+- With `project-dir` (what the `SessionStart`/`SessionEnd` hooks pass, or a path given by hand for an on-demand single-project sync - relative paths like `.` work too), only that project is synced and the configured dirs/files (plans, memory, skills, `CLAUDE.md`, ...) are skipped; without arguments, every project plus all of those is synced.
 - **Slug mapping**: Claude Code names `~/.claude/projects/<slug>` after the project's absolute path. Two machines with different usernames would never get the same slug for a `$HOME`-rooted project, so the `$HOME` prefix is replaced with `-HOMESYNC` on the remote side.
 - A `flock` (60 s) serializes overlapping syncs, one quiet retry absorbs transient gateway bounces, and a real failure is logged (`journalctl -t claude-sync`) and, unless disabled, triggers a desktop notification (`notify-send`).
 

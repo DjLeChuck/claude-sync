@@ -85,6 +85,41 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
   [ ! -e "$CLAUDE_SYNC_LOCAL_DIR/projects/$home_slug-work-b" ]
 }
 
+@test "a relative project dir (e.g. '.') resolves to the same slug as the absolute path" {
+  mkdir -p "$HOME/work/a"
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/projects/$home_slug-work-a/s.jsonl" a
+
+  cd "$HOME/work/a"
+  run claude-sync push .
+  [ "$status" -eq 0 ]
+  [ -e "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" ]
+}
+
+@test "push with a project dir skips configured dirs and files" {
+  mkdir -p "$HOME/work/a"
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/projects/$home_slug-work-a/s.jsonl" a
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" plan
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/CLAUDE.md" instructions
+
+  run claude-sync push "$HOME/work/a"
+  [ "$status" -eq 0 ]
+  [ -e "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" ]
+  [ ! -e "$CLAUDE_SYNC_REMOTE/plans" ]
+  [ ! -e "$CLAUDE_SYNC_REMOTE/CLAUDE.md" ]
+}
+
+@test "pull with a project dir skips configured dirs and files" {
+  mkfile "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" a
+  mkfile "$CLAUDE_SYNC_REMOTE/plans/p.md" plan
+  mkfile "$CLAUDE_SYNC_REMOTE/CLAUDE.md" instructions
+
+  run claude-sync pull "$HOME/work/a"
+  [ "$status" -eq 0 ]
+  [ -e "$CLAUDE_SYNC_LOCAL_DIR/projects/$home_slug-work-a/s.jsonl" ]
+  [ ! -e "$CLAUDE_SYNC_LOCAL_DIR/plans" ]
+  [ ! -e "$CLAUDE_SYNC_LOCAL_DIR/CLAUDE.md" ]
+}
+
 @test "CLAUDE_SYNC_PROJECTS=0 skips projects" {
   CLAUDE_SYNC_PROJECTS=0
   export CLAUDE_SYNC_PROJECTS

@@ -41,7 +41,7 @@ A new setting has to be wired in four places, which are easy to miss:
 ### Script behaviors worth knowing
 
 - The script re-execs itself under `flock -w 60 /tmp/claude-code-sync.lock` (guarded by `FLOCKED=1`) so overlapping hook-triggered syncs serialize instead of being dropped.
-- With a `project-dir` argument (passed by the `SessionStart`/`SessionEnd` hooks), only that project is synced. Without it, all projects are synced (manual runs and the timer).
+- With a `project-dir` argument (passed by the `SessionStart`/`SessionEnd` hooks, or given manually for an on-demand single-project sync - resolved through `realpath` first, so a relative path like `.` works too), only that project is synced and `CLAUDE_SYNC_DIRS`/`CLAUDE_SYNC_FILES` are skipped entirely - they have no notion of "this project". Without it, all projects plus the configured dirs/files are synced (manual full runs and the timer).
 - **Slug mapping**: Claude Code names `projects/<slug>` by replacing every non-alphanumeric character of the project's absolute path with `-`. The local `$HOME` slug prefix is rewritten to `-HOMESYNC` on the remote, and back on pull, so machines with different usernames merge `$HOME`-rooted projects. See `remote_slug_for` / `local_slug_for`.
 - Sync is additive only: `rsync -au`, never `--delete`.
 - `run_rsync` retries once after 2 s (gateway blips). On a push it first calls `ensure_remote_parents`, which creates missing parents with empty-dir rsyncs instead of `--mkpath` (that needs rsync >= 3.2.3 on the server too).

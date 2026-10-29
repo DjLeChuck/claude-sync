@@ -38,9 +38,16 @@ direction="${1:-}"
 # Claude Code hooks interpolate ${CLAUDE_PROJECT_DIR} into the hook command
 # before running it, so SessionStart/SessionEnd pass their project's directory
 # as $2 here and only that one project gets synced - not every project on
-# disk, which is what made each session start/stop take several seconds.
-# Manual calls and the push timer omit it and get a full sync.
+# disk (nor CLAUDE_SYNC_DIRS/FILES), which is what made each session
+# start/stop take several seconds. The same scoping is available for a manual
+# single-project sync: `claude-sync pull /path/to/project`. Omit it (manual
+# full syncs, the push timer) to sync everything.
 target_dir="${2:-}"
+# The slug is derived from the literal path, so "." or "../foo" would hash to
+# something meaningless - resolve to an absolute, canonical path first. `-m`:
+# a pull's target_dir legitimately doesn't exist locally yet (nothing to
+# canonicalize against), so this must work without requiring anything on disk.
+[ -n "$target_dir" ] && target_dir="$(realpath -m "$target_dir")"
 remote="$CLAUDE_SYNC_REMOTE"
 local_dir="$CLAUDE_SYNC_LOCAL_DIR"
 rsync_ssh="sshpass -f $CLAUDE_SYNC_PASSWORD_FILE ssh"
@@ -194,10 +201,15 @@ sync_projects() {
 case "$direction" in
   pull | push)
     [ "$CLAUDE_SYNC_PROJECTS" = 1 ] && sync_projects
-    read -ra sync_dirs <<<"$CLAUDE_SYNC_DIRS"
-    read -ra sync_files <<<"$CLAUDE_SYNC_FILES"
-    for item in "${sync_dirs[@]}"; do sync_one dir "$item"; done
-    for item in "${sync_files[@]}"; do sync_one file "$item"; done
+    # CLAUDE_SYNC_DIRS/FILES aren't project-scoped (CLAUDE.md, skills, etc. have
+    # no notion of "this project"), so a $target_dir call - hook-triggered or a
+    # manual single-project sync - only ever touches that one project.
+    if [ -z "$target_dir" ]; then
+      read -ra sync_dirs <<<"$CLAUDE_SYNC_DIRS"
+      read -ra sync_files <<<"$CLAUDE_SYNC_FILES"
+      for item in "${sync_dirs[@]}"; do sync_one dir "$item"; done
+      for item in "${sync_files[@]}"; do sync_one file "$item"; done
+    fi
     ;;
   *)
     echo "usage: claude-sync {pull|push} [project-dir]" >&2
