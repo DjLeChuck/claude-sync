@@ -45,7 +45,7 @@ A new setting has to be wired in four places, which are easy to miss:
 - **Slug mapping**: Claude Code names `projects/<slug>` by replacing every non-alphanumeric character of the project's absolute path with `-`. The local `$HOME` slug prefix is rewritten to `-HOMESYNC` on the remote, and back on pull, so machines with different usernames merge `$HOME`-rooted projects. See `remote_slug_for` / `local_slug_for`.
 - Sync is additive only: `rsync -au`, never `--delete`.
 - `run_rsync` retries once after 2 s (gateway blips). On a push it first calls `ensure_remote_parents`, which creates missing parents with empty-dir rsyncs instead of `--mkpath` (that needs rsync >= 3.2.3 on the server too).
-- A pull first checks that the remote path exists (`pull_exists`), so the first-ever sync is not reported as a failure.
+- A pull first checks that the remote path exists (`pull_exists`), so the first-ever sync is not reported as a failure. Only rsync exit code 23 (missing source path) counts as "not there yet"; any other error (unreachable host, refused connection, auth) is logged and notified like a failed transfer, so a pull against a dead remote is never silent.
 - Real failures are logged with `logger -t claude-sync` and trigger `notify-send` when `CLAUDE_SYNC_NOTIFY=1`.
 - Directory and file names in `CLAUDE_SYNC_DIRS` / `CLAUDE_SYNC_FILES` are split on whitespace, so they can't contain spaces.
 - `bashOptions = [ ]` in `flake.nix` is deliberate: the script inspects exit codes by hand (`rc=$?`, trailing `cmd && other`), which `set -e` would break. Don't re-enable it.

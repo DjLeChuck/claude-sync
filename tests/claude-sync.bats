@@ -214,3 +214,21 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
   run claude-sync push
   [ ! -e "$NOTIFY_LOG" ]
 }
+
+# A host under the reserved .invalid TLD never resolves, so ssh fails the way an
+# unreachable/refusing remote does (exit 255), not with rsync's "missing path".
+@test "a scoped pull from an unreachable remote is reported, not silently skipped" {
+  CLAUDE_SYNC_REMOTE="unreachable.invalid:/remote"
+  export CLAUDE_SYNC_REMOTE
+
+  run claude-sync pull "$HOME/work/a"
+  grep -q 'Sync (pull, a) failed' "$NOTIFY_LOG"
+}
+
+@test "a full pull from an unreachable remote is reported, not silently skipped" {
+  CLAUDE_SYNC_REMOTE="unreachable.invalid:/remote"
+  export CLAUDE_SYNC_REMOTE
+
+  run claude-sync pull
+  grep -q 'Sync (pull, all projects) failed' "$NOTIFY_LOG"
+}

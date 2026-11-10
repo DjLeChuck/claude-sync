@@ -148,10 +148,30 @@ run_rsync() {
 # sync, before any push happened) is a hard error - check first so that
 # expected case doesn't get logged/notified as one. Same retry tolerance as
 # run_rsync, for the same transient-bounce reason.
+#
+# Only rsync's "partial transfer" exit code (23, what a missing source path
+# yields) means "not there yet". Anything else - unreachable host, refused
+# connection, auth failure - is a real failure and must be logged/notified like
+# run_rsync's, or a pull against a dead remote would just silently do nothing.
+#
+# Returns 0 when the path exists, 1 otherwise. The listing is left in
+# $remote_listing for callers that need it.
 pull_exists() {
-  rsync -e "$rsync_ssh" --list-only "$1" >/dev/null 2>&1 && return 0
-  sleep 2
-  rsync -e "$rsync_ssh" --list-only "$1" >/dev/null 2>&1
+  local err_file rc attempt
+  err_file="$(mktemp)"
+  for attempt in 1 2; do
+    remote_listing="$(rsync -e "$rsync_ssh" --list-only "$1" 2>"$err_file")"
+    rc=$?
+    # A missing path is a definitive answer, only retry real failures.
+    { [ "$rc" = 0 ] || [ "$rc" = 23 ]; } && break
+    [ "$attempt" = 1 ] && sleep 2
+  done
+  if [ "$rc" != 0 ] && [ "$rc" != 23 ]; then
+    failed=1
+    printf 'rsync --list-only %s (exit %s):\n%s\n' "$1" "$rc" "$(cat "$err_file")" | logger -t claude-sync -p user.err
+  fi
+  rm -f "$err_file"
+  [ "$rc" = 0 ]
 }
 
 # A configured item missing locally (no CLAUDE.md yet, no skills/ ever created)
@@ -189,10 +209,12 @@ sync_projects() {
         remote_path="$remote/projects/$(remote_slug_for "$slug")/"
         pull_exists "$remote_path" && run_rsync "$remote_path" "$local_dir/projects/$slug/"
       else
-        while IFS= read -r remote_name; do
-          [ -n "$remote_name" ] || continue
-          run_rsync "$remote/projects/$remote_name/" "$local_dir/projects/$(local_slug_for "$remote_name")/"
-        done < <(rsync -e "$rsync_ssh" --list-only "$remote/projects/" 2>/dev/null | awk '$1 ~ /^d/ && $NF != "." {print $NF}')
+        if pull_exists "$remote/projects/"; then
+          while IFS= read -r remote_name; do
+            [ -n "$remote_name" ] || continue
+            run_rsync "$remote/projects/$remote_name/" "$local_dir/projects/$(local_slug_for "$remote_name")/"
+          done < <(printf '%s\n' "$remote_listing" | awk '$1 ~ /^d/ && $NF != "." {print $NF}')
+        fi
       fi
       ;;
   esac
