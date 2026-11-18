@@ -50,7 +50,16 @@ target_dir="${2:-}"
 [ -n "$target_dir" ] && target_dir="$(realpath -m "$target_dir")"
 remote="$CLAUDE_SYNC_REMOTE"
 local_dir="$CLAUDE_SYNC_LOCAL_DIR"
-rsync_ssh="sshpass -f $CLAUDE_SYNC_PASSWORD_FILE ssh"
+# Every rsync call below opens its own SSH session, and a full sync makes one
+# per project. Some gateways (observed with pCloud's) throttle new connections
+# and reset a good share of them during the key exchange when they come in
+# quick succession. Multiplex them all over a single master connection
+# instead: one TCP connection and one authentication for the whole run.
+# ControlPersist keeps the master alive between calls; it is closed explicitly
+# at the end, and expires on its own if this script dies first.
+ssh_control_path="${XDG_RUNTIME_DIR:-/tmp}/claude-sync-%C"
+ssh_mux_opts=(-o ControlMaster=auto -o "ControlPath=$ssh_control_path" -o ControlPersist=60)
+rsync_ssh="sshpass -f $CLAUDE_SYNC_PASSWORD_FILE ssh ${ssh_mux_opts[*]}"
 failed=0
 
 # Claude Code keys ~/.claude/projects/<slug> off a literal transform of the
@@ -237,6 +246,11 @@ case "$direction" in
     echo "usage: claude-sync {pull|push} [project-dir]" >&2
     exit 1
     ;;
+esac
+
+# Only an SSH remote ("host:path") has a master connection to close.
+case "$remote" in
+  *:*) ssh "${ssh_mux_opts[@]}" -O exit "${remote%%:*}" >/dev/null 2>&1 ;;
 esac
 
 if [ "$failed" = 1 ] && [ "$CLAUDE_SYNC_NOTIFY" = 1 ]; then
