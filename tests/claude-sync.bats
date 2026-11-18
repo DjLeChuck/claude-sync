@@ -12,6 +12,9 @@ setup() {
   export CLAUDE_SYNC_DIRS="plans memory"
   export CLAUDE_SYNC_FILES="CLAUDE.md"
   export CLAUDE_SYNC_NOTIFY=1
+  # Keep the retry policy (one retry for session errors, several for connection
+  # failures) without actually waiting between attempts.
+  export CLAUDE_SYNC_RETRY_DELAYS="0 0 0"
   mkdir -p "$HOME" "$CLAUDE_SYNC_LOCAL_DIR"
   echo secret >"$CLAUDE_SYNC_PASSWORD_FILE"
 

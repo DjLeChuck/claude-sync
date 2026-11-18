@@ -17,6 +17,9 @@
 #                              (names containing spaces are not supported)
 #   CLAUDE_SYNC_NOTIFY         "1" to send a desktop notification on failure
 #                              (failures are always logged to the journal)
+#   CLAUDE_SYNC_RETRY_DELAYS   space-separated waits (seconds) between retries
+#                              of a connection failure (default: "2 5 10 20");
+#                              a tuning/testing knob, not exposed by the module
 
 : "${CLAUDE_SYNC_REMOTE:?CLAUDE_SYNC_REMOTE is not set}"
 : "${CLAUDE_SYNC_PASSWORD_FILE:?CLAUDE_SYNC_PASSWORD_FILE is not set}"
@@ -25,6 +28,7 @@
 : "${CLAUDE_SYNC_DIRS:=}"
 : "${CLAUDE_SYNC_FILES:=}"
 : "${CLAUDE_SYNC_NOTIFY:=1}"
+: "${CLAUDE_SYNC_RETRY_DELAYS=2 5 10 20}"
 
 if [ "${FLOCKED:-}" != "1" ]; then
   # Backgrounded (see the SessionStart/SessionEnd hooks) syncs can overlap -
@@ -61,6 +65,11 @@ ssh_control_path="${XDG_RUNTIME_DIR:-/tmp}/claude-sync-%C"
 ssh_mux_opts=(-o ControlMaster=auto -o "ControlPath=$ssh_control_path" -o ControlPersist=60)
 rsync_ssh="sshpass -f $CLAUDE_SYNC_PASSWORD_FILE ssh ${ssh_mux_opts[*]}"
 failed=0
+read -ra retry_delays <<<"$CLAUDE_SYNC_RETRY_DELAYS"
+# Set once a connection failure survived every retry: the remote is down for
+# this run, so the remaining calls fail fast instead of each one sitting
+# through the whole backoff again (and logging the same error dozens of times).
+remote_down=0
 
 # Claude Code keys ~/.claude/projects/<slug> off a literal transform of the
 # project's absolute path (every non-alnum char becomes "-"). Two machines with
@@ -125,38 +134,53 @@ ensure_remote_parents() {
   rmdir "$empty"
 }
 
+# Whether attempt number $2 (0-based) of a call that just failed with exit code
+# $1 deserves a retry. Some rsync gateways (observed with pCloud's) reset a
+# sizeable share of SSH connections during the key exchange, even isolated
+# ones, so a connection failure (ssh's exit 255) gets the whole
+# CLAUDE_SYNC_RETRY_DELAYS backoff. Any other error comes from a session that
+# did open, where waiting won't change much: a single retry, which is still
+# needed for a first push into a remote lacking parent directories.
+should_retry() {
+  local max=1
+  [ "$1" = 255 ] && max=${#retry_delays[@]}
+  [ "$2" -lt "$max" ] && [ "$2" -lt "${#retry_delays[@]}" ]
+}
+
 run_rsync() {
-  local out rc attempt
+  local out rc attempt=0
+  if [ "$remote_down" = 1 ]; then
+    failed=1
+    return
+  fi
   # Same limitation locally: a pull's destination may sit below a directory
   # that doesn't exist yet (fresh machine, no ~/.claude/projects).
   [ "$direction" = pull ] && mkdir -p "$(dirname "${!#}")"
-  for attempt in 1 2; do
+  while :; do
     out="$(rsync -e "$rsync_ssh" -au "$@" 2>&1)"
     rc=$?
     [ "$rc" = 0 ] && break
-    # Some rsync gateways (observed with pCloud's) occasionally bounce a
-    # session right after accepting it - a transient server-side blip. One
-    # quiet retry absorbs it instead of notifying on what a couple of seconds
-    # later just works.
-    if [ "$attempt" = 1 ]; then
-      # Also covers a first push into a remote lacking parent directories.
-      [ "$direction" = push ] && ensure_remote_parents "${!#}"
-      sleep 2
-    fi
+    should_retry "$rc" "$attempt" || break
+    # A session that opened but failed may be a first push into a remote
+    # lacking parent directories. Pointless when the connection itself failed.
+    [ "$direction" = push ] && [ "$rc" != 255 ] && [ "$attempt" = 0 ] && ensure_remote_parents "${!#}"
+    sleep "${retry_delays[$attempt]}"
+    attempt=$((attempt + 1))
   done
   if [ "$rc" != 0 ]; then
     failed=1
+    [ "$rc" = 255 ] && remote_down=1
     # Detached hook runs discard stdout/stderr, so this is the only place a
     # real failure's detail survives - without it, the notification's "check
     # the journal" would point at an empty journal.
-    printf 'rsync %s (exit %s):\n%s\n' "$*" "$rc" "$out" | logger -t claude-sync -p user.err
+    printf 'rsync %s (exit %s, %s attempts):\n%s\n' "$*" "$rc" "$((attempt + 1))" "$out" | logger -t claude-sync -p user.err
   fi
 }
 
 # A plain rsync pull against a path that doesn't exist yet remotely (first-ever
 # sync, before any push happened) is a hard error - check first so that
-# expected case doesn't get logged/notified as one. Same retry tolerance as
-# run_rsync, for the same transient-bounce reason.
+# expected case doesn't get logged/notified as one. Same retry policy as
+# run_rsync (see should_retry).
 #
 # Only rsync's "partial transfer" exit code (23, what a missing source path
 # yields) means "not there yet". Anything else - unreachable host, refused
@@ -166,18 +190,26 @@ run_rsync() {
 # Returns 0 when the path exists, 1 otherwise. The listing is left in
 # $remote_listing for callers that need it.
 pull_exists() {
-  local err_file rc attempt
+  local err_file rc attempt=0
+  remote_listing=""
+  if [ "$remote_down" = 1 ]; then
+    failed=1
+    return 1
+  fi
   err_file="$(mktemp)"
-  for attempt in 1 2; do
+  while :; do
     remote_listing="$(rsync -e "$rsync_ssh" --list-only "$1" 2>"$err_file")"
     rc=$?
     # A missing path is a definitive answer, only retry real failures.
     { [ "$rc" = 0 ] || [ "$rc" = 23 ]; } && break
-    [ "$attempt" = 1 ] && sleep 2
+    should_retry "$rc" "$attempt" || break
+    sleep "${retry_delays[$attempt]}"
+    attempt=$((attempt + 1))
   done
   if [ "$rc" != 0 ] && [ "$rc" != 23 ]; then
     failed=1
-    printf 'rsync --list-only %s (exit %s):\n%s\n' "$1" "$rc" "$(cat "$err_file")" | logger -t claude-sync -p user.err
+    [ "$rc" = 255 ] && remote_down=1
+    printf 'rsync --list-only %s (exit %s, %s attempts):\n%s\n' "$1" "$rc" "$((attempt + 1))" "$(cat "$err_file")" | logger -t claude-sync -p user.err
   fi
   rm -f "$err_file"
   [ "$rc" = 0 ]
