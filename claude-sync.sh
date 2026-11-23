@@ -14,6 +14,9 @@
 #   CLAUDE_SYNC_REMOTE         remote root: an rsync target such as
 #                              "myhost:/claude-code-sync", or a WebDAV URL such
 #                              as "https://cloud.example.com/remote.php/dav/files/me/claude-code-sync"
+#   CLAUDE_SYNC_REMOTE_FILE    file whose first line is the remote root, read at
+#                              runtime; takes precedence over CLAUDE_SYNC_REMOTE,
+#                              for a remote that must stay out of the Nix store
 #   CLAUDE_SYNC_PASSWORD_FILE  file holding the password (SSH password for
 #                              sshpass, or the WebDAV password - with Nextcloud,
 #                              preferably an app password)
@@ -34,7 +37,8 @@
 #                              exposed by the module. rclone retries on its own.
 
 : "${CLAUDE_SYNC_BACKEND:=rsync}"
-: "${CLAUDE_SYNC_REMOTE:?CLAUDE_SYNC_REMOTE is not set}"
+: "${CLAUDE_SYNC_REMOTE:=}"
+: "${CLAUDE_SYNC_REMOTE_FILE:=}"
 : "${CLAUDE_SYNC_PASSWORD_FILE:?CLAUDE_SYNC_PASSWORD_FILE is not set}"
 : "${CLAUDE_SYNC_WEBDAV_USER:=}"
 : "${CLAUDE_SYNC_WEBDAV_VENDOR:=nextcloud}"
@@ -76,6 +80,19 @@ target_dir="${2:-}"
 # canonicalize against), so this must work without requiring anything on disk.
 [ -n "$target_dir" ] && target_dir="$(realpath -m "$target_dir")"
 remote="$CLAUDE_SYNC_REMOTE"
+if [ -n "$CLAUDE_SYNC_REMOTE_FILE" ]; then
+  # A missing/unreadable file (e.g. a secret not decrypted yet) leaves $remote
+  # empty, reported just below.
+  remote="$(head -n 1 "$CLAUDE_SYNC_REMOTE_FILE" 2>/dev/null)"
+fi
+if [ -z "$remote" ]; then
+  # Hooks run detached, so say it where it will be seen, not just on stderr.
+  msg="no remote configured (CLAUDE_SYNC_REMOTE is empty, or CLAUDE_SYNC_REMOTE_FILE '$CLAUDE_SYNC_REMOTE_FILE' is missing or empty)"
+  echo "claude-sync: $msg" >&2
+  printf '%s\n' "$msg" | logger -t claude-sync -p user.err
+  [ "$CLAUDE_SYNC_NOTIFY" = 1 ] && notify-send -u critical "Claude Code sync" "Sync failed: no remote configured - journalctl -t claude-sync"
+  exit 1
+fi
 local_dir="$CLAUDE_SYNC_LOCAL_DIR"
 backend="$CLAUDE_SYNC_BACKEND"
 failed=0

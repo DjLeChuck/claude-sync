@@ -22,6 +22,7 @@
         {
           backend ? "rsync",
           remote ? "pcloud-rsync:/claude-code-sync",
+          remoteFile ? "",
           passwordFile ? "$HOME/.config/pcloud-rsync-password",
           webdavUser ? "",
           webdavVendor ? "nextcloud",
@@ -54,6 +55,7 @@
           text = ''
             : "''${CLAUDE_SYNC_BACKEND:=${backend}}"
             : "''${CLAUDE_SYNC_REMOTE:=${remote}}"
+            : "''${CLAUDE_SYNC_REMOTE_FILE:=${remoteFile}}"
             : "''${CLAUDE_SYNC_PASSWORD_FILE:=${passwordFile}}"
             : "''${CLAUDE_SYNC_WEBDAV_USER:=${webdavUser}}"
             : "''${CLAUDE_SYNC_WEBDAV_VENDOR:=${webdavVendor}}"
@@ -63,7 +65,7 @@
             : "''${CLAUDE_SYNC_FILES:=${nixpkgs.lib.concatStringsSep " " files}}"
             : "''${CLAUDE_SYNC_NOTIFY:=${if notifyOnFailure then "1" else "0"}}"
             export CLAUDE_SYNC_BACKEND CLAUDE_SYNC_REMOTE CLAUDE_SYNC_PASSWORD_FILE CLAUDE_SYNC_LOCAL_DIR
-            export CLAUDE_SYNC_WEBDAV_USER CLAUDE_SYNC_WEBDAV_VENDOR
+            export CLAUDE_SYNC_REMOTE_FILE CLAUDE_SYNC_WEBDAV_USER CLAUDE_SYNC_WEBDAV_VENDOR
             export CLAUDE_SYNC_PROJECTS CLAUDE_SYNC_DIRS CLAUDE_SYNC_FILES CLAUDE_SYNC_NOTIFY
 
             ${builtins.readFile ./claude-sync.sh}

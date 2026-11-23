@@ -27,6 +27,7 @@ Environment variables (defaults are baked in when the package is built; an expor
 | --- | --- | --- |
 | `CLAUDE_SYNC_BACKEND` | `rsync` or `webdav` | `rsync` |
 | `CLAUDE_SYNC_REMOTE` | remote root: rsync target, or WebDAV URL of the sync directory | `pcloud-rsync:/claude-code-sync` |
+| `CLAUDE_SYNC_REMOTE_FILE` | file whose first line is the remote root, read at runtime (wins over `CLAUDE_SYNC_REMOTE`) - for a remote that must not land in the Nix store | (empty) |
 | `CLAUDE_SYNC_PASSWORD_FILE` | file holding the SSH or WebDAV password | `$HOME/.config/pcloud-rsync-password` |
 | `CLAUDE_SYNC_WEBDAV_USER` | WebDAV user name (`webdav` only) | (empty) |
 | `CLAUDE_SYNC_WEBDAV_VENDOR` | rclone WebDAV vendor (`webdav` only), must keep modification times | `nextcloud` |
@@ -64,6 +65,7 @@ home-manager.users.<user> = {
     # remote = "https://cloud.example.com/remote.php/dav/files/me/claude-code-sync";
     # webdav.user = "me";
     # webdav.vendor = "nextcloud";
+    # remoteFile = "/run/secrets/claude-sync-remote"; # instead of `remote`, to keep it secret
     # passwordFile = "/run/secrets/nextcloud-claude-sync";
     # projects = true;
     # directories = [ "plans" "memory" "skills" ];
@@ -83,7 +85,7 @@ The module installs `claude-sync` and a systemd user timer (`claude-sync-push`) 
 nix profile install "github:DjLeChuck/claude-sync"
 ```
 
-Or use `inputs.claude-sync.lib.mkClaudeSync pkgs { remote = "..."; files = [ "CLAUDE.md" "keybindings.json" ]; }` to get a package with different defaults (accepted arguments: `backend`, `remote`, `passwordFile`, `webdavUser`, `webdavVendor`, `localDir`, `projects`, `directories`, `files`, `notifyOnFailure`).
+Or use `inputs.claude-sync.lib.mkClaudeSync pkgs { remote = "..."; files = [ "CLAUDE.md" "keybindings.json" ]; }` to get a package with different defaults (accepted arguments: `backend`, `remote`, `remoteFile`, `passwordFile`, `webdavUser`, `webdavVendor`, `localDir`, `projects`, `directories`, `files`, `notifyOnFailure`).
 
 ## Claude Code hooks
 

@@ -293,3 +293,24 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
   run claude-sync pull
   grep -q 'Sync (pull, all projects) failed' "$NOTIFY_LOG"
 }
+
+@test "CLAUDE_SYNC_REMOTE_FILE wins over CLAUDE_SYNC_REMOTE" {
+  printf '%s\n' "$CLAUDE_SYNC_REMOTE" >"$BATS_TEST_TMPDIR/remote-file"
+  export CLAUDE_SYNC_REMOTE_FILE="$BATS_TEST_TMPDIR/remote-file"
+  export CLAUDE_SYNC_REMOTE="$BATS_TEST_TMPDIR/elsewhere"
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" plan
+
+  run claude-sync push
+  [ "$status" -eq 0 ]
+  [ "$(cat "$REMOTE_DIR/plans/p.md")" = plan ]
+  [ ! -e "$BATS_TEST_TMPDIR/elsewhere" ]
+}
+
+@test "a missing remote file fails and notifies" {
+  export CLAUDE_SYNC_REMOTE_FILE="$BATS_TEST_TMPDIR/no-such-file"
+  export CLAUDE_SYNC_REMOTE=""
+
+  run claude-sync push
+  [ "$status" -eq 1 ]
+  grep -q 'no remote configured' "$NOTIFY_LOG"
+}

@@ -49,6 +49,7 @@ A new setting has to be wired in four places, which are easy to miss:
 - webdav: rclone retries on its own, so the script never does. The env vars `RCLONE_WEBDAV_*` configure the on-the-fly `:webdav:` remote (no rclone config file). rclone doesn't create the directory the URL points at, so a push first runs `ensure_webdav_root`.
 - Once a connection-level failure (`is_connection_failure`) is logged, `remote_down` makes the rest of the run fail fast.
 - A pull first checks that the remote path exists (`remote_exists`), so the first-ever sync is not reported as a failure. Only the backend's "not found" exit code (rsync 23, rclone 3) counts as "not there yet"; any other error is logged and notified like a failed transfer, so a pull against a dead remote is never silent.
+- `CLAUDE_SYNC_REMOTE_FILE` (module `remoteFile`) is read at runtime and wins over `CLAUDE_SYNC_REMOTE`, so a secret remote never lands in the Nix store.
 - Real failures are logged with `logger -t claude-sync` and trigger `notify-send` when `CLAUDE_SYNC_NOTIFY=1`.
 - Directory and file names in `CLAUDE_SYNC_DIRS` / `CLAUDE_SYNC_FILES` are split on whitespace, so they can't contain spaces.
 - `bashOptions = [ ]` in `flake.nix` is deliberate: the script inspects exit codes by hand (`rc=$?`, trailing `cmd && other`), which `set -e` would break. Don't re-enable it.

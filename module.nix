@@ -16,6 +16,7 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = mkClaudeSync pkgs {
+        remoteFile = if cfg.remoteFile == null then "" else cfg.remoteFile;
         webdavUser = cfg.webdav.user;
         webdavVendor = cfg.webdav.vendor;
         inherit (cfg)
@@ -48,12 +49,27 @@ in
 
     remote = lib.mkOption {
       type = lib.types.str;
+      default = "";
       example = "https://cloud.example.com/remote.php/dav/files/me/claude-code-sync";
       description = ''
         Remote root. With the `rsync` backend, usually an SSH host alias
         (defined in your SSH config, e.g. `programs.ssh`) followed by a path,
         like `pcloud-rsync:/claude-code-sync`. With the `webdav` backend, the
         URL of the directory to sync into (created on the first push).
+        Ignored when `remoteFile` is set.
+      '';
+    };
+
+    remoteFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/run/secrets/claude-sync-remote";
+      description = ''
+        File whose first line is the remote root (same format as `remote`),
+        read at runtime. Use it instead of `remote` when the remote must stay
+        secret: `remote` ends up in the world-readable Nix store. Evaluated by
+        the shell, so it may reference `$HOME`. Provision the file separately
+        (e.g. with sops-nix).
       '';
     };
 
@@ -154,6 +170,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.remote != "" || cfg.remoteFile != null;
+        message = "services.claude-sync: set either `remote` or `remoteFile`.";
+      }
+    ];
+
     home.packages = [ cfg.package ];
 
     systemd.user.services.claude-sync-push = {
