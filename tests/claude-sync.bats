@@ -314,3 +314,47 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
   [ "$status" -eq 1 ]
   grep -q 'no remote configured' "$NOTIFY_LOG"
 }
+
+@test "webdav: a rate-limited server (429) stops the run after the first failure" {
+  [ "$CLAUDE_SYNC_BACKEND" = webdav ] || skip "webdav only"
+  # A server answering 429 to everything, logging each request's path.
+  cat >"$BATS_TEST_TMPDIR/server.py" <<'PY'
+import http.server, sys
+log = open(sys.argv[2], "a", buffering=1)
+class H(http.server.BaseHTTPRequestHandler):
+    def handle_one_request(self):
+        self.raw_requestline = self.rfile.readline(65537)
+        if not self.raw_requestline or not self.parse_request():
+            self.close_connection = True
+            return
+        log.write(self.command + " " + self.path + "\n")
+        n = int(self.headers.get("Content-Length") or 0)
+        if n:
+            self.rfile.read(n)
+        self.send_response(429)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+  local port=$((20000 + RANDOM % 40000))
+  python3 "$BATS_TEST_TMPDIR/server.py" "$port" "$BATS_TEST_TMPDIR/requests" 3>&- &
+  local server_pid=$!
+  for _ in $(seq 50); do
+    (exec 4<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && break
+    sleep 0.1
+  done
+  CLAUDE_SYNC_REMOTE="http://127.0.0.1:$port/remote"
+  export CLAUDE_SYNC_REMOTE
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/projects/-srv-a/s.jsonl" a
+  mkfile "$CLAUDE_SYNC_LOCAL_DIR/projects/-srv-b/s.jsonl" b
+
+  run claude-sync push
+  kill "$server_pid"
+  [ "$status" -eq 1 ]
+  grep -q 'Sync (push, all projects) failed' "$NOTIFY_LOG"
+  # The first project hit the 429; the second one was never attempted.
+  grep -q -- '-srv-a' "$BATS_TEST_TMPDIR/requests"
+  ! grep -q -- '-srv-b' "$BATS_TEST_TMPDIR/requests"
+}

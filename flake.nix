@@ -87,6 +87,8 @@
                 pkgs.bats
                 # The webdav run serves its remote with `rclone serve webdav`.
                 pkgs.rclone
+                # A fake rate-limited (429) WebDAV server for one webdav test.
+                pkgs.python3
                 (mkClaudeSync (
                   pkgs
                   // {

@@ -232,8 +232,15 @@ is_connection_failure() {
     # surfaces as rsync's generic protocol error instead, hence the message.
     rsync) [ "$1" = 255 ] || [[ "$2" == *"Permission denied"* ]] ;;
     # rclone exits 5 on a network error that outlived its own retries, and 1
-    # (uncategorised) on an HTTP auth refusal.
-    webdav) [ "$1" = 5 ] || [[ "$2" == *"401 Unauthorized"* ]] || [[ "$2" == *"403 Forbidden"* ]] ;;
+    # (uncategorised) on an HTTP auth refusal or a rate limit - e.g. Nextcloud's
+    # brute-force protection answers 429 to every login from an IP once its
+    # delay maxes out, which the rest of the run would only keep hitting.
+    webdav)
+      [ "$1" = 5 ] ||
+        [[ "$2" == *"401 Unauthorized"* ]] ||
+        [[ "$2" == *"403 Forbidden"* ]] ||
+        [[ "$2" == *"429 Too Many Requests"* ]]
+      ;;
   esac
 }
 
