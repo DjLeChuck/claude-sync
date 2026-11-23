@@ -16,7 +16,10 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = mkClaudeSync pkgs {
+        webdavUser = cfg.webdav.user;
+        webdavVendor = cfg.webdav.vendor;
         inherit (cfg)
+          backend
           remote
           passwordFile
           localDir
@@ -30,22 +33,58 @@ in
       description = "The claude-sync package to install and run.";
     };
 
+    backend = lib.mkOption {
+      type = lib.types.enum [
+        "rsync"
+        "webdav"
+      ];
+      default = "rsync";
+      description = ''
+        How to reach the remote: `rsync` (rsync-over-SSH, password
+        authentication through `sshpass`) or `webdav` (a WebDAV server such as
+        Nextcloud, through rclone).
+      '';
+    };
+
     remote = lib.mkOption {
       type = lib.types.str;
-      example = "pcloud-rsync:/claude-code-sync";
+      example = "https://cloud.example.com/remote.php/dav/files/me/claude-code-sync";
       description = ''
-        rsync remote root, usually an SSH host alias (defined in your SSH
-        config, e.g. `programs.ssh`) followed by a path.
+        Remote root. With the `rsync` backend, usually an SSH host alias
+        (defined in your SSH config, e.g. `programs.ssh`) followed by a path,
+        like `pcloud-rsync:/claude-code-sync`. With the `webdav` backend, the
+        URL of the directory to sync into (created on the first push).
       '';
+    };
+
+    webdav = {
+      user = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "me";
+        description = "WebDAV user name (`webdav` backend only).";
+      };
+
+      vendor = lib.mkOption {
+        type = lib.types.str;
+        default = "nextcloud";
+        description = ''
+          rclone WebDAV vendor (`webdav` backend only). The server must keep
+          files' modification times, which the "only overwrite older files"
+          merge relies on: `nextcloud`, `owncloud` and `fastmail` do.
+        '';
+      };
     };
 
     passwordFile = lib.mkOption {
       type = lib.types.str;
       default = "$HOME/.config/pcloud-rsync-password";
       description = ''
-        File holding the SSH password handed to `sshpass -f`. Evaluated by the
-        shell at runtime, so it may reference `$HOME`. Never put the secret
-        itself here - provision the file separately (e.g. with sops-nix).
+        File holding the password: the SSH password handed to `sshpass -f`
+        (`rsync` backend), or the WebDAV password (`webdav` backend - with
+        Nextcloud, preferably an app password). Evaluated by the shell at
+        runtime, so it may reference `$HOME`. Never put the secret itself here -
+        provision the file separately (e.g. with sops-nix).
       '';
     };
 

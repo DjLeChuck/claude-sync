@@ -1,12 +1,16 @@
-# Runs the built `claude-sync` against a local directory standing in for the
-# rsync remote (rsync accepts plain paths, so no SSH is involved). `claude-sync`
-# must be on PATH and built with a `notify-send` that appends its arguments to
-# $NOTIFY_LOG (see `checks` in flake.nix).
+# Runs the built `claude-sync` against a remote backed by a local directory,
+# $REMOTE_DIR, so tests can seed and inspect it directly:
+#   CLAUDE_SYNC_TEST_BACKEND=rsync   (default) rsync accepts plain paths, so no
+#                                    SSH is involved
+#   CLAUDE_SYNC_TEST_BACKEND=webdav  the directory is served over WebDAV by
+#                                    `rclone serve webdav` on 127.0.0.1
+# `claude-sync` (and `rclone` for webdav) must be on PATH, `claude-sync` built
+# with a `notify-send` that appends its arguments to $NOTIFY_LOG (see `checks`
+# in flake.nix).
 
 setup() {
   export HOME="$BATS_TEST_TMPDIR/home"
   export CLAUDE_SYNC_LOCAL_DIR="$HOME/.claude"
-  export CLAUDE_SYNC_REMOTE="$BATS_TEST_TMPDIR/remote"
   export CLAUDE_SYNC_PASSWORD_FILE="$BATS_TEST_TMPDIR/password"
   export CLAUDE_SYNC_PROJECTS=1
   export CLAUDE_SYNC_DIRS="plans memory"
@@ -21,6 +25,66 @@ setup() {
   export NOTIFY_LOG="$BATS_TEST_TMPDIR/notify.log"
 
   home_slug="$(printf '%s' "$HOME" | sed -E 's/[^A-Za-z0-9]/-/g')"
+
+  export CLAUDE_SYNC_BACKEND="${CLAUDE_SYNC_TEST_BACKEND:-rsync}"
+  if [ "$CLAUDE_SYNC_BACKEND" = webdav ]; then
+    export CLAUDE_SYNC_WEBDAV_USER=test
+    # rclone's own WebDAV server keeps modification times the ownCloud way;
+    # the nextcloud vendor would also try Nextcloud's chunked-upload endpoint.
+    export CLAUDE_SYNC_WEBDAV_VENDOR=owncloud
+    # Fail fast instead of going through rclone's retries on purpose-made
+    # failures.
+    export RCLONE_RETRIES=1 RCLONE_LOW_LEVEL_RETRIES=1
+    start_webdav
+  fi
+  use_remote remote
+}
+
+teardown() {
+  if [ -n "${webdav_pid:-}" ]; then
+    kill "$webdav_pid" 2>/dev/null || true
+  fi
+}
+
+# Serves $BATS_TEST_TMPDIR over WebDAV on a free local port ($webdav_port).
+start_webdav() {
+  local try wait
+  for try in 1 2 3 4 5; do
+    webdav_port=$((20000 + RANDOM % 40000))
+    # fd 3 is bats' own: a background process holding it makes bats hang.
+    rclone serve webdav "$BATS_TEST_TMPDIR" --addr "127.0.0.1:$webdav_port" -q 3>&- &
+    webdav_pid=$!
+    for wait in $(seq 50); do
+      (exec 4<>"/dev/tcp/127.0.0.1/$webdav_port") 2>/dev/null && return 0
+      kill -0 "$webdav_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill "$webdav_pid" 2>/dev/null || true
+  done
+  echo "could not start rclone serve webdav" >&2
+  return 1
+}
+
+# Points the remote at $BATS_TEST_TMPDIR/$1 (exposed as $REMOTE_DIR), through
+# the backend under test.
+use_remote() {
+  REMOTE_DIR="$BATS_TEST_TMPDIR/$1"
+  case "$CLAUDE_SYNC_BACKEND" in
+    rsync) CLAUDE_SYNC_REMOTE="$REMOTE_DIR" ;;
+    webdav) CLAUDE_SYNC_REMOTE="http://127.0.0.1:$webdav_port/$1" ;;
+  esac
+  export REMOTE_DIR CLAUDE_SYNC_REMOTE
+}
+
+# Points the remote at a host under the reserved .invalid TLD, which never
+# resolves: fails the way an unreachable/refusing remote does, not with the
+# backend's "missing path".
+use_unreachable_remote() {
+  case "$CLAUDE_SYNC_BACKEND" in
+    rsync) CLAUDE_SYNC_REMOTE="unreachable.invalid:/remote" ;;
+    webdav) CLAUDE_SYNC_REMOTE="http://unreachable.invalid/remote" ;;
+  esac
+  export CLAUDE_SYNC_REMOTE
 }
 
 mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
@@ -40,11 +104,11 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 
   run claude-sync push
   [ "$status" -eq 0 ]
-  [ "$(cat "$CLAUDE_SYNC_REMOTE/plans/p.md")" = plan ]
-  [ "$(cat "$CLAUDE_SYNC_REMOTE/memory/m.md")" = mem ]
-  [ "$(cat "$CLAUDE_SYNC_REMOTE/CLAUDE.md")" = instructions ]
-  [ ! -e "$CLAUDE_SYNC_REMOTE/skills" ]
-  [ ! -e "$CLAUDE_SYNC_REMOTE/other.json" ]
+  [ "$(cat "$REMOTE_DIR/plans/p.md")" = plan ]
+  [ "$(cat "$REMOTE_DIR/memory/m.md")" = mem ]
+  [ "$(cat "$REMOTE_DIR/CLAUDE.md")" = instructions ]
+  [ ! -e "$REMOTE_DIR/skills" ]
+  [ ! -e "$REMOTE_DIR/other.json" ]
 }
 
 @test "push maps the \$HOME slug prefix to -HOMESYNC" {
@@ -53,13 +117,13 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 
   run claude-sync push
   [ "$status" -eq 0 ]
-  [ "$(cat "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-app/s.jsonl")" = home ]
-  [ "$(cat "$CLAUDE_SYNC_REMOTE/projects/-srv-dev-app/s.jsonl")" = abs ]
+  [ "$(cat "$REMOTE_DIR/projects/-HOMESYNC-work-app/s.jsonl")" = home ]
+  [ "$(cat "$REMOTE_DIR/projects/-srv-dev-app/s.jsonl")" = abs ]
 }
 
 @test "pull maps -HOMESYNC back to the local \$HOME slug" {
-  mkfile "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-app/s.jsonl" home
-  mkfile "$CLAUDE_SYNC_REMOTE/projects/-srv-dev-app/s.jsonl" abs
+  mkfile "$REMOTE_DIR/projects/-HOMESYNC-work-app/s.jsonl" home
+  mkfile "$REMOTE_DIR/projects/-srv-dev-app/s.jsonl" abs
 
   run claude-sync pull
   [ "$status" -eq 0 ]
@@ -74,13 +138,13 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 
   run claude-sync push "$HOME/work/a"
   [ "$status" -eq 0 ]
-  [ -e "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" ]
-  [ ! -e "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-b" ]
+  [ -e "$REMOTE_DIR/projects/-HOMESYNC-work-a/s.jsonl" ]
+  [ ! -e "$REMOTE_DIR/projects/-HOMESYNC-work-b" ]
 }
 
 @test "pull with a project dir only syncs that project" {
-  mkfile "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" a
-  mkfile "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-b/s.jsonl" b
+  mkfile "$REMOTE_DIR/projects/-HOMESYNC-work-a/s.jsonl" a
+  mkfile "$REMOTE_DIR/projects/-HOMESYNC-work-b/s.jsonl" b
 
   run claude-sync pull "$HOME/work/a"
   [ "$status" -eq 0 ]
@@ -95,7 +159,7 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
   cd "$HOME/work/a"
   run claude-sync push .
   [ "$status" -eq 0 ]
-  [ -e "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" ]
+  [ -e "$REMOTE_DIR/projects/-HOMESYNC-work-a/s.jsonl" ]
 }
 
 @test "push with a project dir skips configured dirs and files" {
@@ -106,15 +170,15 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 
   run claude-sync push "$HOME/work/a"
   [ "$status" -eq 0 ]
-  [ -e "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" ]
-  [ ! -e "$CLAUDE_SYNC_REMOTE/plans" ]
-  [ ! -e "$CLAUDE_SYNC_REMOTE/CLAUDE.md" ]
+  [ -e "$REMOTE_DIR/projects/-HOMESYNC-work-a/s.jsonl" ]
+  [ ! -e "$REMOTE_DIR/plans" ]
+  [ ! -e "$REMOTE_DIR/CLAUDE.md" ]
 }
 
 @test "pull with a project dir skips configured dirs and files" {
-  mkfile "$CLAUDE_SYNC_REMOTE/projects/-HOMESYNC-work-a/s.jsonl" a
-  mkfile "$CLAUDE_SYNC_REMOTE/plans/p.md" plan
-  mkfile "$CLAUDE_SYNC_REMOTE/CLAUDE.md" instructions
+  mkfile "$REMOTE_DIR/projects/-HOMESYNC-work-a/s.jsonl" a
+  mkfile "$REMOTE_DIR/plans/p.md" plan
+  mkfile "$REMOTE_DIR/CLAUDE.md" instructions
 
   run claude-sync pull "$HOME/work/a"
   [ "$status" -eq 0 ]
@@ -131,17 +195,17 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 
   run claude-sync push
   [ "$status" -eq 0 ]
-  [ ! -e "$CLAUDE_SYNC_REMOTE/projects" ]
-  [ -e "$CLAUDE_SYNC_REMOTE/plans/p.md" ]
+  [ ! -e "$REMOTE_DIR/projects" ]
+  [ -e "$REMOTE_DIR/plans/p.md" ]
 }
 
 @test "sync is additive: nothing is ever deleted" {
-  mkfile "$CLAUDE_SYNC_REMOTE/plans/remote-only.md" remote
+  mkfile "$REMOTE_DIR/plans/remote-only.md" remote
   mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/local-only.md" local
 
   run claude-sync push
   [ "$status" -eq 0 ]
-  [ -e "$CLAUDE_SYNC_REMOTE/plans/remote-only.md" ]
+  [ -e "$REMOTE_DIR/plans/remote-only.md" ]
 
   run claude-sync pull
   [ "$status" -eq 0 ]
@@ -152,29 +216,28 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 @test "a newer destination file is not overwritten" {
   mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" old
   touch -d '2020-01-01' "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md"
-  mkfile "$CLAUDE_SYNC_REMOTE/plans/p.md" new
+  mkfile "$REMOTE_DIR/plans/p.md" new
 
   run claude-sync push
   [ "$status" -eq 0 ]
-  [ "$(cat "$CLAUDE_SYNC_REMOTE/plans/p.md")" = new ]
+  [ "$(cat "$REMOTE_DIR/plans/p.md")" = new ]
 }
 
 @test "first push creates a missing nested remote root" {
-  CLAUDE_SYNC_REMOTE="$BATS_TEST_TMPDIR/deep/er/remote"
-  export CLAUDE_SYNC_REMOTE
+  use_remote deep/er/remote
   mkfile "$CLAUDE_SYNC_LOCAL_DIR/projects/-srv-app/s.jsonl" x
   mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" plan
 
   run claude-sync push
   [ "$status" -eq 0 ]
-  [ -e "$CLAUDE_SYNC_REMOTE/projects/-srv-app/s.jsonl" ]
-  [ -e "$CLAUDE_SYNC_REMOTE/plans/p.md" ]
+  [ -e "$REMOTE_DIR/projects/-srv-app/s.jsonl" ]
+  [ -e "$REMOTE_DIR/plans/p.md" ]
 }
 
 @test "pull creates a missing local projects/ and dirs" {
-  mkfile "$CLAUDE_SYNC_REMOTE/projects/-srv-app/s.jsonl" x
-  mkfile "$CLAUDE_SYNC_REMOTE/plans/p.md" plan
-  mkfile "$CLAUDE_SYNC_REMOTE/CLAUDE.md" instructions
+  mkfile "$REMOTE_DIR/projects/-srv-app/s.jsonl" x
+  mkfile "$REMOTE_DIR/plans/p.md" plan
+  mkfile "$REMOTE_DIR/CLAUDE.md" instructions
 
   run claude-sync pull
   [ "$status" -eq 0 ]
@@ -199,8 +262,7 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 @test "a failing sync notifies when CLAUDE_SYNC_NOTIFY=1" {
   # The remote lives below a regular file, so it can never be created.
   echo x >"$BATS_TEST_TMPDIR/file"
-  CLAUDE_SYNC_REMOTE="$BATS_TEST_TMPDIR/file/remote"
-  export CLAUDE_SYNC_REMOTE
+  use_remote file/remote
   mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" plan
 
   run claude-sync push
@@ -209,28 +271,24 @@ mkfile() { mkdir -p "$(dirname "$1")" && echo "$2" >"$1"; }
 
 @test "a failing sync stays silent when CLAUDE_SYNC_NOTIFY=0" {
   echo x >"$BATS_TEST_TMPDIR/file"
-  CLAUDE_SYNC_REMOTE="$BATS_TEST_TMPDIR/file/remote"
+  use_remote file/remote
   CLAUDE_SYNC_NOTIFY=0
-  export CLAUDE_SYNC_REMOTE CLAUDE_SYNC_NOTIFY
+  export CLAUDE_SYNC_NOTIFY
   mkfile "$CLAUDE_SYNC_LOCAL_DIR/plans/p.md" plan
 
   run claude-sync push
   [ ! -e "$NOTIFY_LOG" ]
 }
 
-# A host under the reserved .invalid TLD never resolves, so ssh fails the way an
-# unreachable/refusing remote does (exit 255), not with rsync's "missing path".
 @test "a scoped pull from an unreachable remote is reported, not silently skipped" {
-  CLAUDE_SYNC_REMOTE="unreachable.invalid:/remote"
-  export CLAUDE_SYNC_REMOTE
+  use_unreachable_remote
 
   run claude-sync pull "$HOME/work/a"
   grep -q 'Sync (pull, a) failed' "$NOTIFY_LOG"
 }
 
 @test "a full pull from an unreachable remote is reported, not silently skipped" {
-  CLAUDE_SYNC_REMOTE="unreachable.invalid:/remote"
-  export CLAUDE_SYNC_REMOTE
+  use_unreachable_remote
 
   run claude-sync pull
   grep -q 'Sync (pull, all projects) failed' "$NOTIFY_LOG"
